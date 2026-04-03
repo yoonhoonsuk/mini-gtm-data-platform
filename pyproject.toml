@@ -8,5 +8,9 @@ dependencies = [
     "apache-airflow>=3.1.2",
     "dbt-duckdb>=1.10.0",
     "duckdb>=1.4.1",
+    "langchain-anthropic>=1.4.0",
+    "langchain-core>=1.2.25",
+    "langgraph>=1.1.4",
+    "streamlit>=1.56.0",
 ]
 
