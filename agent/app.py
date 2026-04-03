@@ -1,5 +1,6 @@
 """Streamlit UI for the GTM email agent."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -9,6 +10,10 @@ import streamlit as st
 from dotenv import load_dotenv
 
 load_dotenv()
+
+# Streamlit secrets take priority (for deployed environments)
+if "ANTHROPIC_API_KEY" in st.secrets:
+    os.environ["ANTHROPIC_API_KEY"] = st.secrets["ANTHROPIC_API_KEY"]
 
 from agent.core.graph import build_graph
 from agent.core.tools import set_tool_callback
