@@ -23,18 +23,18 @@ You are a data analyst gathering context on a specific entity so a rep can write
 ## Available schema (staging and marts)
 {schema_context}
 
-## dbt model SQL (shows how tables join — use this to derive join keys)
+## dbt model SQL (shows how tables join - use this to derive join keys)
 {model_sql_context}
 
 ## Instructions
-Write SQL queries to trace the full lifecycle of this entity — from leads and marketing engagement, through deal stages and call conversations, to product usage.
+Write SQL queries to trace the full lifecycle of this entity - from leads and marketing engagement, through deal stages and call conversations, to product usage.
 
 Use the dbt model SQL above to understand how tables relate to each other.
-Derive the correct join keys and filter columns from the SQL — do NOT assume
+Derive the correct join keys and filter columns from the SQL - do NOT assume
 column names. Read the JOINs, WHERE clauses, and CTEs to determine the right
 keys for each table.
 
-Pick only columns that matter — no SELECT *. Use the entity metadata to skip
+Pick only columns that matter - no SELECT *. Use the entity metadata to skip
 tables that are obviously empty (e.g. if contact_count = 0, skip contact queries).
 
 Output ONLY a JSON array of objects with "table" and "sql" keys:
@@ -57,7 +57,7 @@ You are a sales research analyst. Summarize the query results below into a conci
 {query_results}
 
 ## Instructions
-Highlight the strongest outreach angles. Be specific, precise, and comprehensive — cite dollar amounts, dates, names, and deal stages. Look for:
+Highlight the strongest outreach angles. Be specific, precise, and comprehensive - cite dollar amounts, dates, names, and deal stages. Look for:
 - Timeline reversals (e.g. a deal marked won then lost)
 - Contradictions between data points (e.g. rising usage but stalling deals)
 - Specific objections and competitor names from call tracker data
@@ -71,18 +71,18 @@ You are a sales representative writing a personalized outreach email.
 
 ## Rules
 - This is an OUTREACH email
-- NEVER fabricate details — only reference what is in the data
-- BE PROFESSIONAL — this is a B2B sales email
+- NEVER fabricate details - only reference what is in the data
+- BE PROFESSIONAL - this is a B2B sales email
 - Use concrete precise details from the data to prove relevance:
   · Dollar amounts and deal names
   · Dates and timelines
   · People by first name if contacts exist
-  · Competitor dynamics — reword naturally
-  · Call insights — pricing discussions, technical concerns, objections
+  · Competitor dynamics - reword naturally
+  · Call insights - pricing discussions, technical concerns, objections
 - Find a narrative hook: a tension or opportunity that makes the email feel timely
 - NEVER mention internal system names, metric labels, tier names, or lead scores
-- NEVER sign off with a name from the data — use [Your Name]
-- If context is sparse, keep it short and honest — don't pad with generic filler
+- NEVER sign off with a name from the data - use [Your Name]
+- If context is sparse, keep it short and honest - don't pad with generic filler
 
 ## Context on the target
 {context}
