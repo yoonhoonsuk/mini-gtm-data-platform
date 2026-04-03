@@ -1,4 +1,4 @@
-"""Tools available to LLM nodes, plus shared LLM helpers."""
+"""Tools and helpers shared across agent nodes."""
 
 from __future__ import annotations
 import os
@@ -9,28 +9,13 @@ from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 
-# ---------------------------------------------------------------------------
-# Paths & constants
-# ---------------------------------------------------------------------------
-
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 WAREHOUSE_PATH = PROJECT_ROOT / "warehouse" / "data.duckdb"
-
 MAX_ROWS = 50
-
-
-# ---------------------------------------------------------------------------
-# DB helpers
-# ---------------------------------------------------------------------------
 
 
 def _get_connection() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(WAREHOUSE_PATH), read_only=True)
-
-
-# ---------------------------------------------------------------------------
-# Tools exposed to LLM nodes via bind_tools
-# ---------------------------------------------------------------------------
 
 
 @tool
@@ -57,11 +42,6 @@ def run_query(sql: str) -> str:
         con.close()
 
 
-# ---------------------------------------------------------------------------
-# LLM helper
-# ---------------------------------------------------------------------------
-
-
 def get_llm(model: str | None = None) -> ChatAnthropic:
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise RuntimeError("ANTHROPIC_API_KEY is not set.")
@@ -85,7 +65,7 @@ def run_agent_loop(
     max_iterations: int = 10,
     verbose: bool = False,
 ) -> tuple[str, dict[str, list], str]:
-    """Run an LLM tool-use loop. Returns (text, tool_results, error)."""
+    """Run an LLM tool-use loop until it stops calling tools. Returns (text, tool_results, error)."""
     try:
         llm = get_llm()
         llm_with_tools = llm.bind_tools(tools)
@@ -124,7 +104,7 @@ def run_agent_loop(
                 _tool_callback(name, args, result_str)
             messages.append(ToolMessage(content=result_str, tool_call_id=tc["id"]))
 
-    # Force a final summary if the loop ended on tool calls
+    # loop hit max iterations while still calling tools, ask for a summary
     try:
         llm_no_tools = get_llm()
         messages.append(HumanMessage(content="Summarize your findings."))

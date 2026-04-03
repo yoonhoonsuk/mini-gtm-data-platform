@@ -1,4 +1,4 @@
-"""CLI entry point — takes a target name, runs the graph, prints the email."""
+"""CLI entry point for the email agent."""
 
 from __future__ import annotations
 import argparse
@@ -33,7 +33,6 @@ def main() -> None:
     graph = build_graph()
     result = graph.invoke({"target_input": target, "verbose": args.verbose})
 
-    # Handle errors
     error = result.get("error") if isinstance(result, dict) else getattr(result, "error", "")
     if error:
         print(f"\nError: {error}", file=sys.stderr)

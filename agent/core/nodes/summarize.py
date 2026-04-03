@@ -1,4 +1,4 @@
-"""Summarize node — distills query results into an analyst briefing."""
+"""Summarize node — distills query results into an analyst briefing for outreach."""
 
 from __future__ import annotations
 import sys
@@ -10,7 +10,7 @@ from agent.core.tools import get_llm
 
 
 def summarize(state: AgentState) -> dict:
-    """Summarize gathered data into outreach angles for the synthesizer."""
+    """Distill raw query results into an analyst briefing with outreach angles."""
     if state.error:
         return {}
 

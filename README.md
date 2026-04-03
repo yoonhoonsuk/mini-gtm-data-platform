@@ -49,87 +49,59 @@ streamlit run agent/app.py
 
 The app displays each graph node as it executes, shows SQL queries in expandable panels, and renders the final email alongside the analyst summary.
 
-Both interfaces accept account names (e.g. "Catalyst Systems") or person names (e.g. "Eve Lopez"). When a person is searched, the agent resolves them to their linked account and gathers context for both.
+Both interfaces accept account names (e.g. "Catalyst Systems") or person names (e.g. "Eve Lopez"). When a person is searched, the agent resolves them to their row and the query planner follows foreign keys like `account_id` to pull account context during gathering.
 
 ### Architecture & LangGraph Flow
 
-The agent is implemented as a 5-node LangGraph state machine. A single Pydantic `AgentState` object flows through the graph, with each node reading what it needs and writing its outputs back. All LLM calls use Anthropic's Claude Sonnet model via `langchain-anthropic`.
+5-node LangGraph state machine. A single Pydantic `AgentState` flows through the graph; each node reads what it needs and writes back. All LLM calls use Claude Sonnet via `langchain-anthropic`. Conditional edges after each node check for errors and short-circuit to `END`.
 
 ![LangGraph Flow](graph.png)
 
-Conditional edges after `discover`, `resolve`, `gather_context`, and `summarize` check for errors and short-circuit to `END` when something fails, avoiding unnecessary downstream LLM calls.
+**1. Discover** — Queries `information_schema` for all columns/types in `staging` and `marts`, then parses dbt `manifest.json` for model dependencies and mart SQL.
 
-**1. Discover**
+**2. Resolve** — Finds the target entity. Queries `information_schema` to dynamically discover tables with identity columns (`name`, `account_name`, `company`, `email`, `first_name`, `last_name`) and runs `ILIKE` searches. The resolved entity is returned as a raw row dict; no account enrichment happens here. When a person is found, their `account_id` is visible to the downstream query planner, which handles the account lookup naturally.
 
-Queries DuckDB's `information_schema` for all column names and types across `staging` and `marts` schemas. Parses the dbt `manifest.json` to extract model dependencies and — critically — the raw SQL for mart models, which contains the `JOIN` clauses that reveal how tables relate. This means the downstream query planner can derive join keys from actual SQL rather than guessing.
+If heuristics find nothing, an LLM fallback gets the `run_query` tool with the full schema and writes its own search SQL. Both paths return the same dict shape so downstream nodes get a consistent entity structure.
 
-Only mart SQL is included (not staging) because staging models are simple pass-throughs with cleaning logic — the join relationships live entirely in the marts layer. This keeps context size manageable (~7,700 tokens for round 1).
+**3. Gather Context** — The core node. An LLM reads the schema, dbt SQL, and entity metadata, then generates a JSON array of `{table, sql}` query plans executed against DuckDB (read-only, 50-row cap). Runs up to 3 rounds; after each, the LLM sees results plus a coverage report of queried vs. unqueried tables. Exits early when: the LLM returns an empty array, a round yields no new data, or all mart tables are covered. SQL errors are fed back so the LLM can self-correct.
 
-**2. Resolve** 
+**4. Summarize** — Analyst briefing that distills query results into outreach angles: timeline reversals, contradictions, competitor mentions, overdue deals, stakeholder gaps. Deliberately separate from synthesize because combining them into one LLM call degraded both outputs.
 
-Takes the user's input string and finds the matching entity in the database. Queries `information_schema` to dynamically discover which tables contain identity columns — columns named `name`, `account_name`, `company`, `email`, `first_name`, or `last_name`. This is an assumption the agent makes: that identity columns follow standard naming conventions. No table names are hardcoded. The heuristic runs `ILIKE` searches against discovered tables in priority order (account-like tables first, dimensions before facts). If the match is a person, it follows their account link and merges both into the resolved entity (the person is preserved under a `_person` key so downstream nodes see both).
-
-If the heuristic finds nothing, an LLM fallback uses the `run_query` tool with the full schema context to write its own search SQL. The fallback parses the pipe-delimited tool result into the same dict shape as the heuristic path, ensuring consistent entity structure downstream. This covers cases where the schema uses non-standard column names or the search term doesn't match any identity column.
-
-**3. Gather Context** (iterative LLM query planner + deterministic SQL execution)
-
-The core of the agent. An LLM reads the full schema, dbt model SQL, and resolved entity metadata, then generates a JSON array of `{table, sql}` query plans. These are executed deterministically against DuckDB (read-only, 50-row cap per query).
-
-The loop runs up to 3 rounds — in practice, round 1 covers the core mart tables and round 2 fills gaps in staging; round 3 rarely adds material context. After each round, the LLM sees the results plus a coverage report (which tables have been queried, which haven't). It can generate follow-up queries for uncovered tables or deeper queries on tables that revealed interesting patterns.
-
-The loop exits early when:
-- The LLM returns an empty query array
-- A round returns no new data (all queries came back empty)
-
-SQL errors are fed back to the LLM as part of the results so it can fix its queries in the next round (e.g., disambiguating column names with table aliases).
-
-**4. Summarize** 
-
-An analyst-style briefing that distills the raw query results into outreach angles. The prompt instructs the LLM to look for timeline reversals, contradictions between data points, competitor mentions, overdue deals, and stakeholder gaps. This summary is stored in state and passed to the synthesizer alongside the raw structured data.
-
-This is deliberately a separate node from synthesize. When I attempted to combine analysis and email generation into a single LLM call, both outputs degraded — the analysis became shallow and the email lost specificity. Two focused calls outperform one overloaded call.
-
-**5. Synthesize** 
-
-Writes the final outreach email. Receives both the structured data rows (source of truth) and the analyst summary (interpretive layer). The prompt enforces strict grounding rules: never fabricate details, use concrete data points (dollar amounts, dates, names), find a narrative hook, and never mention internal system names or metric labels.
+**5. Synthesize** — Writes the email. Receives the structured data rows (source of truth) and analyst summary (interpretive layer). Grounding rules: never fabricate, cite concrete data points, find a narrative hook, never mention internal system names.
 
 ### Design Decisions & Trade-offs
 
-The core problem I tackled was enabling the agent to dynamically generate accurate SQL across varied and unfamiliar data schemas without requiring manual hardcoding.
-
-I evaluated several approaches before landing on the current architecture:
+The core problem was enabling the agent to dynamically generate accurate SQL across unfamiliar schemas without hardcoding.
 
 | Approach | Pros | Cons | Verdict |
 |---|---|---|---|
-| **Hardcoded SQL** | Fast, deterministic, no LLM cost | Breaks on any schema change. Defeats the purpose of dynamic discovery. | Too brittle |
-| **Single LLM call for context** | One round-trip, low latency | Misses context in tables it doesn't think to query on the first pass. No ability to follow up on interesting patterns. | Misses depth |
-| **Reciprocal Rank Fusion (RRF)** | Could score/rank relevant tables without multiple LLM calls. Elegant retrieval approach. | Over-engineered for 18 tables. The schema is small enough that the LLM can see all of it at once. RRF shines when the search space is too large for the context window. | Overkill at this scale |
-| **Full manifest.json feedback loop** | Maximum coverage — every query result feeds back to refine the next | 10+ LLM calls per run. Latency and cost spiral. | Too slow |
-| **Current: iterative planner with early exit** | LLM sees real SQL from dbt to derive joins. 1-3 rounds with deterministic exit conditions. Balances coverage with cost. | Still 3-5 serial LLM calls total. Not the fastest. | Best middle ground |
+| **Hardcoded SQL** | Fast, deterministic | Breaks on schema changes | Too brittle |
+| **Single LLM call** | One round-trip | Misses tables it doesn't think to query first pass | Misses depth |
+| **RRF table selection** | Fuse multiple signals (schema embeddings, table popularity, row counts) to rank relevant tables without LLM calls | Over-engineered for 18 tables that fit in context | Overkill at this scale |
+| **Full feedback loop** | Maximum coverage | 10+ LLM calls per run | Too slow |
+| **Iterative planner with early exit** | Real dbt SQL for joins, 1-3 rounds, exit conditions | 3-5 serial LLM calls | Best middle ground |
 
-Other notable design decisions:
+Other decisions:
 
-- **Heuristic-first entity resolution.** Burning an LLM call to do `ILIKE '%name%'` is wasteful. The heuristic queries `information_schema` for columns matching identity naming conventions (`name`, `company`, `first_name`, etc.) and searches those dynamically. This handles 90%+ of lookups without an LLM call. The one assumption is that identity columns follow standard naming — the LLM fallback catches cases where they don't.
+- **Heuristic-first entity resolution.** Burning an LLM call to do `ILIKE '%name%'` is wasteful. The heuristic queries `information_schema` for identity columns and searches dynamically. The fallback catches non-standard schemas.
 
-- **Mart SQL only in context, not staging.** The discover node extracts `raw_code` from `manifest.json` but only for mart models. Staging models are `SELECT * FROM raw.table` with cleaning filters: they add noise with zero join relationship information. The mart SQL files contain the JOINed datasets the planner needs.
+- **Resolve stays simple.** When a person is searched, resolve returns the raw row without following foreign keys to an account table. The gather_context planner sees the `account_id` in the entity metadata and queries the account table as part of its normal batch. This avoids hardcoding table names in resolve and keeps entity resolution focused on one job.
 
-- **Entity resolution returns a consistent shape regardless of path.** The heuristic returns a row dict from `_rows_to_dicts`. The LLM fallback parses its pipe-delimited tool output into the same dict structure. This prevents silent downstream degradation where `entity.get("account_id")` returns `None` because the fallback returned a different format.
+- **Mart SQL only in context.** Staging models are `SELECT * FROM raw.table` with cleaning filters. The join relationships live in the marts layer, so only mart SQL is passed to the planner.
 
-- **SQL errors are context, not failures.** When a query fails (e.g., ambiguous column name), the error message and failed SQL are included in the next round's results. The LLM can see what went wrong and fix it — e.g., adding table aliases to disambiguate. This is cheaper than retrying blindly.
+- **Consistent entity shape.** Both the heuristic and LLM fallback paths return the same dict structure, preventing silent downstream breakage.
+
+- **SQL errors are context, not failures.** Failed queries and their errors are included in the next round's results so the LLM can self-correct.
 
 ### Future Improvements
 
-**Hallucination Checker** — Add a verification node after `synthesize` that cross-references every factual claim in the email (dollar amounts, dates, names, deal stages) against the structured query results in state. The implementation would parse the email for specific data points, then check each against the `context.data` rows. Claims that don't match any source row get flagged, and the email is either regenerated or the unsupported claims are removed. This is the single highest-impact addition for production reliability.
+**Hallucination Checker** — A verification node after `synthesize` that cross-references every factual claim in the email against the structured query results. Claims that don't match any source row get flagged and the email is regenerated. Highest-impact addition for production reliability.
 
-**SQL Guardrails** — The current architecture executes LLM-generated SQL directly against DuckDB. While the connection is read-only, there are no checks that the SQL is actually a `SELECT` statement, no query timeout, and no cost control for expensive joins. Adding a lightweight SQL parser to reject non-SELECT statements and a per-query timeout would harden the execution layer.
+**SQL Guardrails** — The connection is read-only, but there's no validation that the SQL is actually a `SELECT` and no query timeout. A lightweight SQL parser and per-query timeout would harden this.
 
-**Reciprocal Rank Fusion (RRF)** — At the current scale (18 tables, ~130K rows), the schema fits comfortably in the LLM context window. But if the warehouse grew to hundreds of tables, RRF could score and rank which tables are most relevant to a given entity without burning LLM calls. This would replace the iterative query planning loop with a retrieval step: embed the schema descriptions, rank by relevance to the entity, and only include the top-k tables in the planner's context.
+**RRF Table Selection at Scale** — At 18 tables the schema fits in context. At hundreds, Reciprocal Rank Fusion could fuse multiple signals (embeddings of table/column descriptions, query popularity, row counts) to surface the most relevant tables without LLM calls. The dbt SQL would still provide join relationships; RRF just narrows which tables the planner sees.
 
-**Fine-tuning for Email Generation** — The synthesize node relies entirely on prompt engineering to control email quality, grounding, and tone. A fine-tuned model trained on examples of high-quality, data-grounded outreach emails would be more consistent and less sensitive to prompt phrasing. This would also reduce the prompt size since behavioral rules could be baked into the model weights rather than spelled out in the system prompt.
-
-**Combining Summarize + Synthesize** — I attempted merging analysis and email generation into a single LLM call with structured output tags (`<analysis>` and `<email>`). The result was notably worse — shallower analysis and more generic emails. With a more capable model or a better prompting strategy (e.g., chain-of-thought within the email writing step), this could save one LLM round-trip per run. This remains a goal because the latency improvement is meaningful.
-
-**Rate Limiting & Authentication** — Slightly overkill for an internal tool, but if multiple users query the agent concurrently, both the DuckDB warehouse and the Anthropic API could get overloaded. Adding request-level rate limiting (e.g., per-user token bucket) and basic API key authentication would prevent runaway costs and database contention. The Streamlit app currently has no access control.
+**Combining Summarize + Synthesize** — Keeping them separate improved quality, but with a more capable model or better prompting this could save one LLM round-trip per run.
 
 ---
 

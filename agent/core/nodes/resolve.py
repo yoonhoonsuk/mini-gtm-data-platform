@@ -1,4 +1,4 @@
-"""Resolve node — find the target entity in the database."""
+"""Resolve node — finds the target entity in the database."""
 
 from __future__ import annotations
 import sys
@@ -15,7 +15,7 @@ def _rows_to_dicts(cursor) -> list[dict]:
 
 
 def _discover_entity_tables() -> list[tuple[str, str, str]]:
-    """Find tables with identity columns via information_schema."""
+    """Find tables with identity columns, return (table, search_expr, entity_type) tuples."""
     con = _get_connection()
     try:
         rows = con.execute(f"""
@@ -48,35 +48,13 @@ def _discover_entity_tables() -> list[tuple[str, str, str]]:
     return results
 
 
-def _link_to_account(entity: dict, verbose: bool) -> dict:
-    """If entity has an account_id, look up the account and merge."""
-    acct_id = entity.get("account_id") or entity.get("converted_account_id")
-    if not acct_id:
-        return entity
-    try:
-        con = _get_connection()
-        accts = _rows_to_dicts(con.execute(
-            "SELECT * FROM marts.dim_accounts WHERE account_id = ?", [acct_id]
-        ))
-        con.close()
-    except Exception:
-        return entity
-    if not accts:
-        return entity
-    if verbose:
-        print(f"[resolve] Linked to account: {accts[0].get('name')}", file=sys.stderr)
-    merged = dict(accts[0])
-    merged["_person"] = dict(entity)
-    return merged
-
-
 def _heuristic_search(target: str, verbose: bool) -> dict | None:
-    """Search dynamically discovered entity tables via ILIKE."""
+    """ILIKE search across dynamically discovered identity columns."""
     for table, expr, etype in _discover_entity_tables():
         try:
             con = _get_connection()
             rows = _rows_to_dicts(con.execute(
-                f"SELECT * FROM {table} WHERE {expr} ILIKE ? ORDER BY 1 DESC LIMIT 5",
+                f"SELECT * FROM {table} WHERE {expr} ILIKE ? LIMIT 5",
                 [f"%{target}%"],
             ))
             con.close()
@@ -86,10 +64,7 @@ def _heuristic_search(target: str, verbose: bool) -> dict | None:
             continue
         if verbose:
             print(f"[resolve] Found {len(rows)} match(es) in {table}", file=sys.stderr)
-        best = rows[0]
-        if etype == "person":
-            best = _link_to_account(best, verbose)
-        return {"resolution_type": "exact", "resolved_entity": best}
+        return {"resolution_type": "exact", "resolved_entity": rows[0]}
     return None
 
 
@@ -106,7 +81,7 @@ def _parse_pipe_table(text: str) -> dict | None:
 
 
 def _llm_fallback(target: str, schema_context: str, verbose: bool) -> dict:
-    """Use LLM to search when heuristics fail."""
+    """Give the LLM the run_query tool and let it search when heuristics fail."""
     if verbose:
         print("[resolve] Heuristic failed, falling back to LLM search.", file=sys.stderr)
     _, tool_results, error = run_agent_loop(
@@ -123,12 +98,12 @@ def _llm_fallback(target: str, schema_context: str, verbose: bool) -> dict:
         if "0 rows" not in result and "SQL Error" not in result:
             entity = _parse_pipe_table(result)
             if entity:
-                entity = _link_to_account(entity, verbose)
                 return {"resolution_type": "exact", "resolved_entity": entity}
     return {"resolution_type": "not_found", "error": f"No entity found matching '{target}'."}
 
 
 def resolve(state: AgentState) -> dict:
+    """Try heuristic search first, fall back to LLM if nothing matches."""
     target = state.target_input.strip()
     if state.verbose:
         print(f"[resolve] Searching for: '{target}'", file=sys.stderr)

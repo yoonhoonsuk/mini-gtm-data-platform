@@ -1,4 +1,4 @@
-"""Context-gathering node — iterative query planning + deterministic execution."""
+"""Context-gathering node — iterative query planning and execution."""
 
 from __future__ import annotations
 import json
@@ -14,23 +14,15 @@ MAX_ROUNDS = 3
 
 
 def _fmt(entity: dict) -> str:
-    """Format entity dict for LLM context, surfacing nested _person data."""
-    person = entity.get("_person")
-    top_level = {k: v for k, v in entity.items() if k != "_person"}
-    lines = [f"  {k}: {v}" for k, v in top_level.items()]
-    if person:
-        lines.append("  --- searched person ---")
-        lines.extend(f"  {k}: {v}" for k, v in person.items())
-    return "\n".join(lines)
+    return "\n".join(f"  {k}: {v}" for k, v in entity.items())
 
 
 def _all_tables(schema_context: str) -> set[str]:
-    """Extract all table names from schema_context (e.g. 'staging.stg_accounts')."""
     return set(re.findall(r"^(\w+\.\w+):", schema_context, re.MULTILINE))
 
 
 def _parse_queries(text: str) -> list[dict]:
-    """Extract JSON array of queries from LLM response."""
+    """Extract the JSON query array from an LLM response."""
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if not match:
         return []
@@ -41,7 +33,7 @@ def _parse_queries(text: str) -> list[dict]:
 
 
 def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], list[dict]]:
-    """Execute planned queries deterministically. Returns (text_blocks, parsed_rows)."""
+    """Run planned queries against DuckDB, return text blocks and parsed rows."""
     con = _get_connection()
     blocks, rows = [], []
     for q in queries:
@@ -71,33 +63,31 @@ def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], lis
     return blocks, rows
 
 
-
 def gather_context(state: AgentState) -> dict:
-    """Gather context: plan queries -> execute -> evaluate -> loop or summarize."""
+    """Multi-round loop: LLM plans queries, we execute them, repeat until coverage is sufficient."""
     entity = state.resolved_entity
     verbose = state.verbose
 
-    entity_name = entity.get("name") or entity.get("first_name", "unknown")
     if verbose:
-        print(f"[gather_context] Gathering data for {entity_name}", file=sys.stderr)
+        name = entity.get("name") or entity.get("first_name", "unknown")
+        print(f"[gather_context] Gathering data for {name}", file=sys.stderr)
 
-    # Build the system prompt once
     system = QUERY_PLANNER_SYSTEM.format(
         resolved_entity=_fmt(entity),
         schema_context=state.schema_context,
         model_sql_context=state.model_sql_context,
     )
 
-    # Conversation history for the planner — carries across rounds
     messages = [
         SystemMessage(content=system),
-        HumanMessage(content=f"Generate queries to gather context on this entity:\n{_fmt(entity)}"),
+        HumanMessage(content="Generate queries to gather context on this entity."),
     ]
 
     all_blocks = []
     all_parsed = []
     queried_tables = set()
-    all_tables = _all_tables(state.schema_context)
+    tables = _all_tables(state.schema_context)
+    mart_tables = {t for t in tables if t.startswith("marts.")}
     llm = get_llm()
 
     for round_num in range(1, MAX_ROUNDS + 1):
@@ -118,21 +108,17 @@ def gather_context(state: AgentState) -> dict:
         if verbose:
             print(f"[gather_context] Round {round_num}: {len(queries)} queries planned, {len(blocks)} returned data.", file=sys.stderr)
 
-        # Deterministic exit: no new data came back this round
         if not parsed:
             if verbose:
                 print(f"[gather_context] Round {round_num} returned no new data, stopping.", file=sys.stderr)
             break
 
-        # Check if all mart tables have been covered
-        mart_tables = {t for t in all_tables if t.startswith("marts.")}
         if mart_tables <= queried_tables:
             if verbose:
                 print(f"[gather_context] All mart tables covered, stopping.", file=sys.stderr)
             break
 
-        # Show what's been covered and what hasn't
-        not_queried = sorted(all_tables - queried_tables)
+        not_queried = sorted(tables - queried_tables)
         coverage = (
             f"\n\nTables queried so far: {', '.join(sorted(queried_tables))}"
             f"\nTables NOT yet queried: {', '.join(not_queried) or 'none'}"

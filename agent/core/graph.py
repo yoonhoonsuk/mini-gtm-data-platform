@@ -1,4 +1,4 @@
-"""LangGraph graph definition — wires nodes together with conditional routing."""
+"""LangGraph graph definition."""
 
 from __future__ import annotations
 from langgraph.graph import END, StateGraph

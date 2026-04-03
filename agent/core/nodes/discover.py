@@ -1,4 +1,4 @@
-"""Discover node — loads schema + dbt model metadata into state. Deterministic, no LLM."""
+"""Discover node — loads schema and dbt model metadata into state."""
 
 from __future__ import annotations
 import json
@@ -10,11 +10,7 @@ MANIFEST_PATH = PROJECT_ROOT / "dbt_project" / "target" / "manifest.json"
 
 
 def _parse_manifest() -> str:
-    """Extract model metadata and SQL from dbt manifest.json.
-
-    Returns model name, dependencies, and the raw SQL (with JOIN logic)
-    so downstream nodes can derive join keys dynamically.
-    """
+    """Parse dbt manifest for model dependencies and mart SQL (join logic)."""
     if not MANIFEST_PATH.exists():
         return "(manifest.json not found — run `dbt compile` to generate it)"
 
@@ -38,16 +34,11 @@ def _parse_manifest() -> str:
 
 
 def discover(state: AgentState) -> dict:
-    """Discover all available tables, columns, and dbt model metadata.
-
-    Uses information_schema for staging and marts schemas, and
-    parses manifest.json for model relationships.
-    """
+    """Load all table schemas from information_schema and model metadata from dbt manifest."""
     verbose = state.verbose
     if verbose:
         print("[discover] Loading schema and model metadata...", file=sys.stderr)
 
-    # 1. Columns from information_schema — all schemas
     try:
         con = _get_connection()
     except Exception as e:
@@ -72,7 +63,6 @@ def discover(state: AgentState) -> dict:
             "error": "No tables found in the database. Run the dbt pipeline first."
         }
 
-    # Group by schema.table
     tables: dict[str, list[str]] = {}
     for schema, table, col, dtype in rows:
         key = f"{schema}.{table}"
@@ -84,7 +74,6 @@ def discover(state: AgentState) -> dict:
         schema_lines.extend(cols)
     schema_context = "\n".join(schema_lines)
 
-    # 2. Model metadata from manifest.json
     model_context = _parse_manifest()
 
     if verbose:

@@ -1,9 +1,5 @@
-"""All LLM prompts in one place — easy to read, easy to tune."""
+"""All LLM prompts used by agent nodes."""
 
-
-# ---------------------------------------------------------------------------
-# resolve node (LLM fallback): find an entity when heuristic search fails
-# ---------------------------------------------------------------------------
 
 RESOLVE_FALLBACK_SYSTEM = """\
 You are searching a DuckDB warehouse for an entity the user asked about.
@@ -17,10 +13,6 @@ Write SQL queries to find the entity. Try different tables and matching strategi
 If you find a match, return the full row. If not, say so clearly.
 """
 
-
-# ---------------------------------------------------------------------------
-# account_context node — query planner (one-shot, generates all queries)
-# ---------------------------------------------------------------------------
 
 QUERY_PLANNER_SYSTEM = """\
 You are a data analyst gathering context on a specific entity so a rep can write a personalized outreach email.
@@ -55,10 +47,6 @@ Output ONLY a JSON array of objects with "table" and "sql" keys:
 """
 
 
-# ---------------------------------------------------------------------------
-# gather_context node — summarizer (one call over pre-fetched results)
-# ---------------------------------------------------------------------------
-
 SUMMARIZE_CONTEXT_SYSTEM = """\
 You are a sales research analyst. Summarize the query results below into a concise briefing for writing a personalized outreach email.
 
@@ -77,10 +65,6 @@ Highlight the strongest outreach angles. Be specific, precise, and comprehensive
 - Stakeholder changes or gaps (churned users, missing contacts)
 """
 
-
-# ---------------------------------------------------------------------------
-# synthesize node: write the email
-# ---------------------------------------------------------------------------
 
 SYNTHESIZE_SYSTEM = """\
 You are a sales representative writing a personalized outreach email.
