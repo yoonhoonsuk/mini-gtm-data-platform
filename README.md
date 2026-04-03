@@ -10,95 +10,6 @@ To submit, send us a link to your fork with a README outlining your approach and
 
 We're looking forward to seeing your work!
 
-## Quick Setup
-
-Run the setup script to initialize everything:
-
-```bash
-./setup.sh
-```
-
-This will:
-1. Generate synthetic GTM data (accounts, opportunities, stage history, contacts, contact roles, leads, calls, trackers, campaigns, activities, product users/events)
-2. Initialize Airflow and load data into DuckDB
-3. Run dbt transformations (staging → marts)
-
-Then view the dashboards:
-
-```bash
-cd evidence
-npm install       # First time only
-npm run sources   # Build data sources
-npm run dev       # Start dev server
-# Open http://localhost:3000
-```
-
----
-
-## Manual Setup (Advanced)
-
-<details>
-<summary>Click to expand manual setup steps</summary>
-
-### 1. Install dependencies
-
-```bash
-uv sync
-```
-
-### 2. Generate synthetic data
-
-```bash
-uv run python scripts/generate_all.py
-```
-
-### 3. Initialize Airflow
-
-First, update `airflow/airflow.cfg` to use an absolute path for the database:
-
-```bash
-cd airflow
-# Update sql_alchemy_conn in airflow.cfg to:
-# sql_alchemy_conn = sqlite:////absolute/path/to/your/mini-data-platform-gtm/airflow/airflow.db
-
-export AIRFLOW_HOME=$(pwd)
-uv run airflow db migrate
-```
-
-### 4. Run ingestion DAGs
-
-```bash
-# From airflow/ directory
-export AIRFLOW_HOME=$(pwd)
-uv run python dags/ingest_accounts.py
-uv run python dags/ingest_opportunities.py
-uv run python dags/ingest_stage_history.py
-uv run python dags/ingest_contacts.py
-uv run python dags/ingest_contact_roles.py
-uv run python dags/ingest_leads.py
-uv run python dags/ingest_calls.py
-uv run python dags/ingest_call_trackers.py
-uv run python dags/ingest_campaigns.py
-uv run python dags/ingest_lead_activities.py
-uv run python dags/ingest_product_users.py
-uv run python dags/ingest_product_events.py
-```
-
-### 5. Run dbt transformations
-
-```bash
-# From airflow/ directory
-export AIRFLOW_HOME=$(pwd)
-uv run python dags/run_dbt.py
-
-# Or run dbt directly
-cd ../dbt_project
-uv run dbt build --profiles-dir .
-```
-
-</details>
-
----
 
 ## Agent: Personalized Outreach Email Generator
 
@@ -106,7 +17,9 @@ Given an account or prospect name, the agent dynamically discovers the warehouse
 
 ### Getting Started
 
-**Prerequisites**: Python 3.13+, an `ANTHROPIC_API_KEY` in a `.env` file at the project root, and a populated DuckDB warehouse (run `./setup.sh` first).
+**Prerequisites**: Python 3.13+, an `ANTHROPIC_API_KEY` in a `.env` file at the project root.
+
+The repo ships with synthetic data and a populated DuckDB warehouse, so you can run the agent immediately. To regenerate fresh data, refer to [Quick Setup](#quick-setup) below.
 
 ```bash
 # Install dependencies
@@ -298,6 +211,96 @@ The project includes interactive dashboards built with Evidence:
 3. **Full Funnel** (`/funnel`) — Lead-to-close conversion rates, channel ROI, marketing attribution, engagement analysis
 4. **Forecast** (`/forecast`) — Forecast categories, weighted pipeline, rep commit analysis, quarterly trends
 5. **Product Usage** (`/adoption`) — Product usage analytics, feature adoption, engagement tiers, usage vs revenue
+
+## Quick Setup
+
+Run the setup script to initialize everything:
+
+```bash
+./setup.sh
+```
+
+This will:
+1. Generate synthetic GTM data (accounts, opportunities, stage history, contacts, contact roles, leads, calls, trackers, campaigns, activities, product users/events)
+2. Initialize Airflow and load data into DuckDB
+3. Run dbt transformations (staging → marts)
+
+Then view the dashboards:
+
+```bash
+cd evidence
+npm install       # First time only
+npm run sources   # Build data sources
+npm run dev       # Start dev server
+# Open http://localhost:3000
+```
+
+---
+
+## Manual Setup (Advanced)
+
+<details>
+<summary>Click to expand manual setup steps</summary>
+
+### 1. Install dependencies
+
+```bash
+uv sync
+```
+
+### 2. Generate synthetic data
+
+```bash
+uv run python scripts/generate_all.py
+```
+
+### 3. Initialize Airflow
+
+First, update `airflow/airflow.cfg` to use an absolute path for the database:
+
+```bash
+cd airflow
+# Update sql_alchemy_conn in airflow.cfg to:
+# sql_alchemy_conn = sqlite:////absolute/path/to/your/mini-data-platform-gtm/airflow/airflow.db
+
+export AIRFLOW_HOME=$(pwd)
+uv run airflow db migrate
+```
+
+### 4. Run ingestion DAGs
+
+```bash
+# From airflow/ directory
+export AIRFLOW_HOME=$(pwd)
+uv run python dags/ingest_accounts.py
+uv run python dags/ingest_opportunities.py
+uv run python dags/ingest_stage_history.py
+uv run python dags/ingest_contacts.py
+uv run python dags/ingest_contact_roles.py
+uv run python dags/ingest_leads.py
+uv run python dags/ingest_calls.py
+uv run python dags/ingest_call_trackers.py
+uv run python dags/ingest_campaigns.py
+uv run python dags/ingest_lead_activities.py
+uv run python dags/ingest_product_users.py
+uv run python dags/ingest_product_events.py
+```
+
+### 5. Run dbt transformations
+
+```bash
+# From airflow/ directory
+export AIRFLOW_HOME=$(pwd)
+uv run python dags/run_dbt.py
+
+# Or run dbt directly
+cd ../dbt_project
+uv run dbt build --profiles-dir .
+```
+
+</details>
+
+---
 
 ### Running Evidence
 
