@@ -22,10 +22,10 @@ Given an account or prospect name, the agent dynamically discovers the warehouse
 The repo ships with synthetic data and a populated DuckDB warehouse, so you can run the agent immediately. To regenerate fresh data, refer to [Quick Setup](#quick-setup) below.
 
 ```bash
-# Install dependencies
 uv sync
 
-# Set your Anthropic API key
+source .venv/bin/activate 
+
 echo 'ANTHROPIC_API_KEY=your-key-here' > .env
 ```
 
@@ -34,16 +34,16 @@ There are two ways to interact with the agent:
 **CLI** — quick, single-run execution:
 
 ```bash
-uv run python -m agent.cli "Account Name"
+python -m agent.cli "Account Name"
 
 # With verbose output (shows each node's progress on stderr):
-uv run python -m agent.cli "Account Name" --verbose
+python -m agent.cli "Account Name" --verbose
 ```
 
 **Streamlit App** — interactive UI with live tool call visibility:
 
 ```bash
-uv run streamlit run agent/app.py
+streamlit run agent/app.py
 # Open http://localhost:8501
 ```
 
