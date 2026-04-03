@@ -111,6 +111,9 @@ Given an account or prospect name, the agent dynamically discovers the warehouse
 ```bash
 # Install dependencies
 uv sync
+
+# Set your Anthropic API key
+echo 'ANTHROPIC_API_KEY=your-key-here' > .env
 ```
 
 There are two ways to interact with the agent:
@@ -139,7 +142,7 @@ Both interfaces accept account names (e.g. "Catalyst Systems") or person names (
 
 The agent is implemented as a 5-node LangGraph state machine. A single Pydantic `AgentState` object flows through the graph, with each node reading what it needs and writing its outputs back. All LLM calls use Anthropic's Claude Sonnet model via `langchain-anthropic`.
 
-![LangGraph Flow](agent/graph.png)
+![LangGraph Flow](graph.png)
 
 Conditional edges after `discover`, `resolve`, `gather_context`, and `summarize` check for errors and short-circuit to `END` when something fails, avoiding unnecessary downstream LLM calls.
 
