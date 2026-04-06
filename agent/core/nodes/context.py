@@ -8,7 +8,7 @@ import agent.core.tools as _tools
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from agent.core.prompts import QUERY_PLANNER_SYSTEM
 from agent.core.state import AgentState
-from agent.core.tools import _get_connection, get_llm
+from agent.core.tools import execute_sql, get_llm
 
 MAX_ROUNDS = 3
 
@@ -38,7 +38,6 @@ def _parse_queries(text: str) -> list[dict]:
 
 def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], list[dict], dict]:
     """Run planned queries against DuckDB. Returns (text blocks, flat rows, per-table data)."""
-    con = _get_connection()
     blocks, rows = [], []
     tables_data: dict[str, dict] = {}
     for q in queries:
@@ -46,19 +45,13 @@ def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], lis
         if not sql:
             continue
         try:
-            result = con.execute(sql)
-            cols = [d[0] for d in result.description]
-            data = result.fetchall()
-            if not data:
+            cols, parsed_rows = execute_sql(sql)
+            if not parsed_rows:
                 continue
-            parsed_rows = []
             lines = [f"\n### {table}", " | ".join(cols), "-" * 40]
-            for row in data:
-                vals = [str(v) for v in row]
-                lines.append(" | ".join(vals))
-                row_dict = dict(zip(cols, vals))
-                rows.append(row_dict)
-                parsed_rows.append(row_dict)
+            for row in parsed_rows:
+                lines.append(" | ".join(row.values()))
+            rows.extend(parsed_rows)
             block = "\n".join(lines)
             blocks.append(block)
             if table not in tables_data:
@@ -70,7 +63,6 @@ def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], lis
             blocks.append(f"\n### {table}\nSQL Error: {e}\nFailed query: {sql}")
             if verbose:
                 print(f"[context] Error on {table}: {e}", file=sys.stderr)
-    con.close()
     return blocks, rows, tables_data
 
 
@@ -99,7 +91,7 @@ def gather_context(state: AgentState) -> dict:
     all_tables_data: dict[str, dict] = {}
     queried_tables = set()
     tables = _all_tables(state.schema_context)
-    mart_tables = {t for t in tables if t.startswith("marts.")}
+    mart_tables = {t for t in tables if t.startswith("marts.")} # robust?
     llm = get_llm()
 
     for round_num in range(1, MAX_ROUNDS + 1):
@@ -125,11 +117,6 @@ def gather_context(state: AgentState) -> dict:
 
         if verbose:
             print(f"[gather_context] Round {round_num}: {len(queries)} queries planned, {len(blocks)} returned data.", file=sys.stderr)
-
-        if not parsed:
-            if verbose:
-                print(f"[gather_context] Round {round_num} returned no new data, stopping.", file=sys.stderr)
-            break
 
         if mart_tables <= queried_tables:
             if verbose:

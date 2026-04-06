@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 import sys
+from langchain_core.messages import HumanMessage, SystemMessage
 from agent.core.prompts import RESOLVE_FALLBACK_SYSTEM
 from agent.core.state import AgentState
-from agent.core.tools import _get_connection, run_agent_loop, run_query
+from agent.core.tools import _get_connection, get_llm, run_query
 
-IDENTITY_COLUMNS = ('name', 'account_name', 'company', 'email', 'first_name', 'last_name')
+IDENTITY_HINTS = ("name", "company", "email")
 
 
 def _rows_to_dicts(cursor) -> list[dict]:
@@ -14,16 +15,15 @@ def _rows_to_dicts(cursor) -> list[dict]:
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
-def _discover_entity_tables() -> list[tuple[str, str, str]]:
-    """Find tables with identity columns, return (table, search_expr, entity_type) tuples."""
+def _discover_search_targets() -> list[tuple[str, str]]:
+    """Discover (table, search_expression) pairs from VARCHAR columns whose names contain identity hints."""
     con = _get_connection()
     try:
-        rows = con.execute(f"""
+        rows = con.execute("""
             SELECT table_schema, table_name, column_name
             FROM information_schema.columns
             WHERE table_schema IN ('staging', 'marts')
               AND data_type = 'VARCHAR'
-              AND column_name IN {IDENTITY_COLUMNS}
             ORDER BY table_schema, table_name, ordinal_position
         """).fetchall()
     finally:
@@ -31,26 +31,27 @@ def _discover_entity_tables() -> list[tuple[str, str, str]]:
 
     table_cols: dict[str, list[str]] = {}
     for schema, table, col in rows:
-        table_cols.setdefault(f"{schema}.{table}", []).append(col)
+        if any(hint in col for hint in IDENTITY_HINTS):
+            table_cols.setdefault(f"{schema}.{table}", []).append(col)
 
     results = []
     for table, cols in table_cols.items():
+        # If table has first_name + last_name, concatenate for full-name search
         if "first_name" in cols and "last_name" in cols:
-            results.append((table, "first_name || ' ' || last_name", "person"))
-        elif "name" in cols:
-            results.append((table, "name", "account"))
-        elif "account_name" in cols:
-            results.append((table, "account_name", "account"))
-        elif "company" in cols:
-            results.append((table, "company", "account"))
+            results.append((table, "first_name || ' ' || last_name"))
+        # Otherwise search each identity column individually
+        for col in cols:
+            if col not in ("first_name", "last_name"):
+                results.append((table, col))
 
-    results.sort(key=lambda x: (x[2] != "account", "dim_" not in x[0]))
+    # Prefer marts/dim tables (richer data) over staging
+    results.sort(key=lambda x: ("dim_" not in x[0], "marts" not in x[0]))
     return results
 
 
 def _heuristic_search(target: str, verbose: bool) -> dict | None:
     """ILIKE search across dynamically discovered identity columns."""
-    for table, expr, etype in _discover_entity_tables():
+    for table, expr in _discover_search_targets():
         try:
             con = _get_connection()
             rows = _rows_to_dicts(con.execute(
@@ -81,24 +82,38 @@ def _parse_pipe_table(text: str) -> dict | None:
 
 
 def _llm_fallback(target: str, schema_context: str, verbose: bool) -> dict:
-    """Give the LLM the run_query tool and let it search when heuristics fail."""
+    """Single LLM call with run_query tool to search when heuristics fail."""
     if verbose:
         print("[resolve] Heuristic failed, falling back to LLM search.", file=sys.stderr)
-    _, tool_results, error = run_agent_loop(
-        system_prompt=RESOLVE_FALLBACK_SYSTEM.format(schema_context=schema_context),
-        user_prompt=f"Find the entity matching '{target}' in the database.",
-        tools=[run_query],
-        max_iterations=3,
-        verbose=verbose,
-    )
-    if error:
-        return {"resolution_type": "not_found", "error": error}
-    for call in tool_results.get("run_query", []):
-        result = call.get("result", "")
-        if "0 rows" not in result and "SQL Error" not in result:
-            entity = _parse_pipe_table(result)
+
+    try:
+        llm = get_llm().bind_tools([run_query])
+    except Exception as e:
+        return {"resolution_type": "not_found", "error": str(e)}
+
+    messages = [
+        SystemMessage(content=RESOLVE_FALLBACK_SYSTEM.format(schema_context=schema_context)),
+        HumanMessage(content=f"Find the entity matching '{target}' in the database."),
+    ]
+
+    try:
+        response = llm.invoke(messages)
+    except Exception as e:
+        return {"resolution_type": "not_found", "error": str(e)}
+
+    if not response.tool_calls:
+        return {"resolution_type": "not_found", "error": f"No entity found matching '{target}'."}
+
+    for tc in response.tool_calls:
+        result_str = str(run_query.invoke(tc["args"]))
+        if verbose:
+            preview = result_str[:200] + ("..." if len(result_str) > 200 else "")
+            print(f"    -> run_query({tc['args']}) = {preview}", file=sys.stderr)
+        if "0 rows" not in result_str and "SQL Error" not in result_str:
+            entity = _parse_pipe_table(result_str)
             if entity:
                 return {"resolution_type": "exact", "resolved_entity": entity}
+
     return {"resolution_type": "not_found", "error": f"No entity found matching '{target}'."}
 
 
