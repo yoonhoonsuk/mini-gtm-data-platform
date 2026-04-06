@@ -9,7 +9,7 @@ from agent.core.graph import build_graph
 load_dotenv()
 
 
-def main() -> None:
+def main():
     parser = argparse.ArgumentParser(
         description="Generate a personalized outreach email for an account or prospect."
     )

@@ -30,10 +30,7 @@ def build_graph() -> StateGraph:
 
     graph.set_entry_point("discover")
     graph.add_conditional_edges("discover", _skip_on_error, {"continue": "resolve", "end": END})
-    graph.add_conditional_edges("resolve", route_after_resolve, {
-        "gather_context": "gather_context",
-        "error_exit": END,
-    })
+    graph.add_conditional_edges("resolve", route_after_resolve, {"gather_context": "gather_context", "error_exit": END})
     graph.add_conditional_edges("gather_context", _skip_on_error, {"continue": "summarize", "end": END})
     graph.add_conditional_edges("summarize", _skip_on_error, {"continue": "synthesize", "end": END})
     graph.add_edge("synthesize", END)

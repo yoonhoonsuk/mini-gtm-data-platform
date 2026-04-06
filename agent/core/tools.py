@@ -11,8 +11,6 @@ from langchain_core.tools import tool
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 WAREHOUSE_PATH = PROJECT_ROOT / "warehouse" / "data.duckdb"
-MAX_ROWS = 50
-
 
 def _get_connection() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(WAREHOUSE_PATH), read_only=True)
@@ -20,21 +18,17 @@ def _get_connection() -> duckdb.DuckDBPyConnection:
 
 @tool
 def run_query(sql: str) -> str:
-    """Execute a read-only SQL query against the DuckDB warehouse. Capped at 50 rows."""
+    """Execute a read-only SQL query against the DuckDB warehouse."""
     con = _get_connection()
     try:
         result = con.execute(sql)
         columns = [desc[0] for desc in result.description]
-        rows = result.fetchmany(MAX_ROWS + 1)
-        truncated = len(rows) > MAX_ROWS
-        rows = rows[:MAX_ROWS]
+        rows = result.fetchall()
         if not rows:
             return f"Query returned 0 rows.\nColumns: {', '.join(columns)}"
         lines = [" | ".join(columns), "-" * 40]
         for row in rows:
             lines.append(" | ".join(str(v) for v in row))
-        if truncated:
-            lines.append(f"\n... (truncated to {MAX_ROWS} rows)")
         return "\n".join(lines)
     except Exception as e:
         return f"SQL Error: {e}"
