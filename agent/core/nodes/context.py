@@ -43,7 +43,7 @@ def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], lis
         try:
             result = con.execute(sql)
             cols = [d[0] for d in result.description]
-            data = result.fetchmany(50)
+            data = result.fetchall()
             if not data:
                 continue
             lines = [f"\n### {table}", " | ".join(cols), "-" * 40]
