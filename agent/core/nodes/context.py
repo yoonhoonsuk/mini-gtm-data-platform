@@ -12,13 +12,17 @@ from agent.core.tools import _get_connection, get_llm
 
 MAX_ROUNDS = 3
 
-
 def _fmt(entity: dict) -> str:
     return "\n".join(f"  {k}: {v}" for k, v in entity.items())
 
 
 def _all_tables(schema_context: str) -> set[str]:
-    return set(re.findall(r"^(\w+\.\w+):", schema_context, re.MULTILINE))
+    """Extract table names (e.g. 'marts.dim_accounts') from schema context lines like '\\nstaging.stg_accounts:'."""
+    tables = set()
+    for line in schema_context.splitlines():
+        if line.endswith(":") and "." in line:
+            tables.add(line.rstrip(":").strip())
+    return tables
 
 
 def _parse_queries(text: str) -> list[dict]:
@@ -28,14 +32,15 @@ def _parse_queries(text: str) -> list[dict]:
         return []
     try:
         return json.loads(match.group())
-    except json.JSONDecodeError:
+    except Exception:
         return []
 
 
-def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], list[dict]]:
-    """Run planned queries against DuckDB, return text blocks and parsed rows."""
+def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], list[dict], dict]:
+    """Run planned queries against DuckDB. Returns (text blocks, flat rows, per-table data)."""
     con = _get_connection()
     blocks, rows = [], []
+    tables_data: dict[str, dict] = {}
     for q in queries:
         table, sql = q.get("table", "?"), q.get("sql", "")
         if not sql:
@@ -46,13 +51,19 @@ def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], lis
             data = result.fetchall()
             if not data:
                 continue
+            parsed_rows = []
             lines = [f"\n### {table}", " | ".join(cols), "-" * 40]
             for row in data:
                 vals = [str(v) for v in row]
                 lines.append(" | ".join(vals))
-                rows.append(dict(zip(cols, vals)))
+                row_dict = dict(zip(cols, vals))
+                rows.append(row_dict)
+                parsed_rows.append(row_dict)
             block = "\n".join(lines)
             blocks.append(block)
+            if table not in tables_data:
+                tables_data[table] = {"columns": cols, "rows": []}
+            tables_data[table]["rows"].extend(parsed_rows)
             if _tools._tool_callback:
                 _tools._tool_callback("run_query", {"sql": sql}, block)
         except Exception as e:
@@ -60,7 +71,7 @@ def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], lis
             if verbose:
                 print(f"[context] Error on {table}: {e}", file=sys.stderr)
     con.close()
-    return blocks, rows
+    return blocks, rows, tables_data
 
 
 def gather_context(state: AgentState) -> dict:
@@ -85,6 +96,7 @@ def gather_context(state: AgentState) -> dict:
 
     all_blocks = []
     all_parsed = []
+    all_tables_data: dict[str, dict] = {}
     queried_tables = set()
     tables = _all_tables(state.schema_context)
     mart_tables = {t for t in tables if t.startswith("marts.")}
@@ -102,9 +114,13 @@ def gather_context(state: AgentState) -> dict:
                 print(f"[gather_context] Round {round_num}: LLM returned no queries, stopping.", file=sys.stderr)
             break
 
-        blocks, parsed = _execute_queries(queries, verbose)
+        blocks, parsed, tables_data = _execute_queries(queries, verbose)
         all_blocks.extend(blocks)
         all_parsed.extend(parsed)
+        for tbl, info in tables_data.items():
+            if tbl not in all_tables_data:
+                all_tables_data[tbl] = {"columns": info["columns"], "rows": []}
+            all_tables_data[tbl]["rows"].extend(info["rows"])
         queried_tables.update(q.get("table", "") for q in queries)
 
         if verbose:
@@ -142,4 +158,4 @@ def gather_context(state: AgentState) -> dict:
     if not all_blocks:
         return {"error": "All queries returned empty results."}
 
-    return {"context": {"entity": entity, "data": all_parsed}, "result_blocks": all_blocks, "query_rounds": round_num}
+    return {"context": {"entity": entity, "data": all_parsed, "tables": all_tables_data}, "result_blocks": all_blocks, "query_rounds": round_num}

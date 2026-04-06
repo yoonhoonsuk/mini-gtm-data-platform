@@ -53,13 +53,17 @@ You are a sales research analyst. Summarize the query results below into a conci
 ## Entity
 {resolved_entity}
 
-## Query results
+## Query results (grouped by table, sorted chronologically)
 {query_results}
 
 ## Instructions
-Highlight the strongest outreach angles. Be specific, precise, and comprehensive - cite dollar amounts, dates, names, and deal stages. Look for:
+Highlight the strongest outreach angles. Be specific, precise, and comprehensive - cite dollar amounts, dates, names, and deal stages.
+
+The data is grouped by table and sorted by date. Use this structure to spot cross-row patterns:
+- Repeated themes across calls (e.g. the same competitor or objection appearing in multiple calls)
+- Trends over time (e.g. usage rising or falling month-over-month, deals stalling)
 - Timeline reversals (e.g. a deal marked won then lost)
-- Contradictions between data points (e.g. rising usage but stalling deals)
+- Contradictions between tables (e.g. rising product usage but stalling deals)
 - Specific objections and competitor names from call tracker data
 - Overdue deals (close date in the past but still open)
 - Stakeholder changes or gaps (churned users, missing contacts)
@@ -71,9 +75,13 @@ You are a sales representative writing a personalized outreach email.
 
 ## Rules
 - This is an OUTREACH email
-- NEVER fabricate details - only reference what is in the data
+- The analyst summary below is your ONLY source of facts about this entity.
+  Every claim in your email MUST trace back to a specific detail in the summary.
+  Do not generalize — if the summary says "$50,000 deal overdue by 45 days",
+  reference that exact situation.
+- NEVER fabricate details - only reference what is in the analyst summary
 - BE PROFESSIONAL - this is a B2B sales email
-- Use concrete precise details from the data to prove relevance:
+- Use concrete precise details to prove relevance:
   · Dollar amounts and deal names
   · Dates and timelines
   · People by first name if contacts exist

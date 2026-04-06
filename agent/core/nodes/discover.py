@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 import json
+import re
 import sys
 from agent.core.state import AgentState
 from agent.core.tools import PROJECT_ROOT, _get_connection
@@ -33,16 +34,12 @@ def _parse_manifest() -> str:
     return "\n\n".join(blocks)
 
 
-def discover(state: AgentState) -> dict:
-    """Load all table schemas from information_schema and model metadata from dbt manifest."""
-    verbose = state.verbose
-    if verbose:
-        print("[discover] Loading schema and model metadata...", file=sys.stderr)
-
+def _parse_schema() -> str:
+    """Query information_schema for all columns/types in staging and marts."""
     try:
         con = _get_connection()
     except Exception as e:
-        return {"error": str(e)}
+        raise RuntimeError(str(e))
 
     try:
         rows = con.execute(
@@ -54,14 +51,12 @@ def discover(state: AgentState) -> dict:
             """
         ).fetchall()
     except Exception as e:
-        return {"error": f"Failed to read schema: {e}"}
+        raise RuntimeError(f"Failed to read schema: {e}")
     finally:
         con.close()
 
     if not rows:
-        return {
-            "error": "No tables found in the database. Run the dbt pipeline first."
-        }
+        raise RuntimeError("No tables found in the database. Run the dbt pipeline first.")
 
     tables: dict[str, list[str]] = {}
     for schema, table, col, dtype in rows:
@@ -72,14 +67,27 @@ def discover(state: AgentState) -> dict:
     for table_key, cols in tables.items():
         schema_lines.append(f"\n{table_key}:")
         schema_lines.extend(cols)
-    schema_context = "\n".join(schema_lines)
+    return "\n".join(schema_lines)
+
+
+def discover(state: AgentState) -> dict:
+    """Load all table schemas from information_schema and model metadata from dbt manifest."""
+    verbose = state.verbose
+    if verbose:
+        print("[discover] Loading schema and model metadata...", file=sys.stderr)
+
+    try:
+        schema_context = _parse_schema()
+    except RuntimeError as e:
+        return {"error": str(e)}
 
     model_context = _parse_manifest()
 
     if verbose:
-        n_schemas = len({k.split(".")[0] for k in tables})
+        table_keys = re.findall(r"^(\w+\.\w+):", schema_context, re.MULTILINE)
+        n_schemas = len({k.split(".")[0] for k in table_keys})
         print(
-            f"[discover] Found {len(tables)} tables across {n_schemas} schemas.",
+            f"[discover] Found {len(table_keys)} tables across {n_schemas} schemas.",
             file=sys.stderr,
         )
 

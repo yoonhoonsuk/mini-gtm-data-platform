@@ -9,19 +9,13 @@ from agent.core.tools import get_llm
 
 
 def _format_context_for_prompt(context: dict) -> str:
-    """Serialize entity, data rows, and analyst summary into a single prompt string."""
+    """Serialize entity metadata and analyst summary into a prompt string."""
     parts = []
 
     entity = context.get("entity", {})
     parts.append("Entity:")
     for k, v in entity.items():
         parts.append(f"  {k}: {v}")
-
-    data = context.get("data", [])
-    if data:
-        parts.append(f"\n--- Structured data ({len(data)} records) ---")
-        for row in data:
-            parts.append("  " + " | ".join(f"{k}: {v}" for k, v in row.items()))
 
     summary = context.get("summary", "")
     if summary:

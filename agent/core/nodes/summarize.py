@@ -9,6 +9,26 @@ from agent.core.state import AgentState
 from agent.core.tools import get_llm
 
 
+def _build_analyst_input(tables_data: dict, entity: dict) -> str:
+    """Transform per-table query results into a grouped format for the summarize LLM."""
+    parts = [f"## Entity\n{_fmt(entity)}"]
+
+    for table, info in tables_data.items():
+        rows = info["rows"]
+        if not rows:
+            continue
+
+        parts.append(f"\n## {table} ({len(rows)} rows)")
+        for i, row in enumerate(rows, 1):
+            row_lines = [f"Row {i}:"]
+            for k, v in row.items():
+                if v and v != "None" and v != "0":
+                    row_lines.append(f"  {k}: {v}")
+            parts.append("\n".join(row_lines))
+
+    return "\n\n".join(parts)
+
+
 def summarize(state: AgentState) -> dict:
     """Distill raw query results into an analyst briefing with outreach angles."""
     if state.error:
@@ -20,9 +40,12 @@ def summarize(state: AgentState) -> dict:
     if verbose:
         print("[summarize] Generating analyst briefing...", file=sys.stderr)
 
+    analyst_input = _build_analyst_input(
+        state.context.get("tables", {}), entity,
+    )
     prompt = SUMMARIZE_CONTEXT_SYSTEM.format(
         resolved_entity=_fmt(entity),
-        query_results="\n".join(state.result_blocks),
+        query_results=analyst_input,
     )
 
     try:
