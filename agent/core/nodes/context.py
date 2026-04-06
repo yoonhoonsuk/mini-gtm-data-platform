@@ -98,6 +98,8 @@ def gather_context(state: AgentState) -> dict:
 
         queries = _parse_queries(resp.content or "")
         if not queries:
+            if verbose:
+                print(f"[gather_context] Round {round_num}: LLM returned no queries, stopping.", file=sys.stderr)
             break
 
         blocks, parsed = _execute_queries(queries, verbose)
