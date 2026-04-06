@@ -13,6 +13,10 @@ from agent.core.tools import execute_sql, get_llm
 MAX_ROUNDS = 3
 
 def _fmt(entity: dict) -> str:
+    """
+    Formats an entity dict as indented key-value lines for LLM prompts. 
+    {"name": "Catalyst Systems"} → "name:Catalyst Systems"         
+    """
     return "\n".join(f"  {k}: {v}" for k, v in entity.items())
 
 
@@ -26,7 +30,7 @@ def _get_tables(schema_context: str) -> set[str]:
 
 
 def _parse_queries(text: str) -> list[dict]:
-    """Extract the JSON query array from an LLM response."""
+    """Extract the JSON query array from an LLM response in md."""
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if not match:
         return []
@@ -48,17 +52,24 @@ def _execute_queries(queries: list[dict], verbose: bool) -> tuple[list[str], lis
             cols, parsed_rows = execute_sql(sql)
             if not parsed_rows:
                 continue
-            lines = [f"\n### {table}", " | ".join(cols), "-" * 40]
+
+            # Builds a pipe-delimited text block (used to feed results back to the LLM in the next round)
+            lines = [f"\n### {table}", " | ".join(cols), "-" * 40] 
             for row in parsed_rows:
                 lines.append(" | ".join(row.values()))
             rows.extend(parsed_rows)
             block = "\n".join(lines)
             blocks.append(block)
+
+            # Accumulates rows into tables_data grouped by table name (used by summarize)
             if table not in tables_data:
                 tables_data[table] = {"columns": cols, "rows": []}
             tables_data[table]["rows"].extend(parsed_rows)
+            
+            # For streamlit UI to display the most recent query result
             if _tools._tool_callback:
                 _tools._tool_callback("run_query", {"sql": sql}, block)
+
         except Exception as e:
             blocks.append(f"\n### {table}\nSQL Error: {e}\nFailed query: {sql}")
             if verbose:
@@ -95,17 +106,20 @@ def gather_context(state: AgentState) -> dict:
     llm = get_llm()
 
     for round_num in range(1, MAX_ROUNDS + 1):
+        # Sends messages, gets back a response containing a JSON query plan
         try:
             resp = llm.invoke(messages)
         except Exception as e:
             return {"error": str(e)}
 
+        # Extracts the JSON array. If empty, the LLM decided coverage is sufficient → break
         queries = _parse_queries(resp.content or "")
         if not queries:
             if verbose:
                 print(f"[gather_context] Round {round_num}: LLM returned no queries, stopping.", file=sys.stderr)
             break
 
+        # Runs all planned queries via _execute_queries. Merges this round's results into the running totals. Tracks which tables have been queried
         blocks, parsed, tables_data = _execute_queries(queries, verbose)
         all_blocks.extend(blocks)
         all_parsed.extend(parsed)
@@ -117,12 +131,15 @@ def gather_context(state: AgentState) -> dict:
 
         if verbose:
             print(f"[gather_context] Round {round_num}: {len(queries)} queries planned, {len(blocks)} returned data.", file=sys.stderr)
-
+        
+        # If every mart table has been queried at least once → break
         if mart_tables <= queried_tables:
             if verbose:
                 print(f"[gather_context] All mart tables covered, stopping.", file=sys.stderr)
             break
 
+        # shows the LLM its query results plus a coverage report ("queried: X, Y, Z / not yet queried: A, B"). 
+        # Appends this as the next message so the LLM can plan follow-up queries
         not_queried = sorted(tables - queried_tables)
         coverage = (
             f"\n\nTables queried so far: {', '.join(sorted(queried_tables))}"

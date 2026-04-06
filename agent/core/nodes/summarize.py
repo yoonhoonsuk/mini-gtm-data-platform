@@ -18,8 +18,11 @@ def _build_analyst_input(tables_data: dict, entity: dict) -> str:
         if not rows:
             continue
 
+        # Adds a header for this table group, e.g. ## marts.fct_opportunities (3 rows).
         parts.append(f"\n## {table} ({len(rows)} rows)")
-        for i, row in enumerate(rows, 1):
+
+        # Formats each row into a multiline string (e.g., "Row 1:\n  key: value"), skipping empty or filtered fields, and appends it to parts.
+        for i, row in enumerate(rows, 1): # 1-indexed rows
             row_lines = [f"Row {i}:"]
             for k, v in row.items():
                 if v and v != "None" and v != "0":
@@ -31,6 +34,7 @@ def _build_analyst_input(tables_data: dict, entity: dict) -> str:
 
 def summarize(state: AgentState) -> dict:
     """Distill raw query results into an analyst briefing with outreach angles."""
+    # If an upstream node set an error, skip.
     if state.error:
         return {}
 
@@ -40,6 +44,7 @@ def summarize(state: AgentState) -> dict:
     if verbose:
         print("[summarize] Generating analyst briefing...", file=sys.stderr)
 
+    # Builds a prompt with the resolved entity and all query results (formatted by _build_analyst_input). One LLM call → returns summary/briefing for the analyst.
     analyst_input = _build_analyst_input(
         state.context.get("tables", {}), entity,
     )
@@ -56,6 +61,7 @@ def summarize(state: AgentState) -> dict:
     except Exception as e:
         return {"error": str(e)}
 
+    # Adds the briefing as context["summary"] alongside the existing entity and data. This is the only thing synthesize will see.
     ctx = dict(state.context)
     ctx["summary"] = resp.content or ""
     return {"context": ctx}

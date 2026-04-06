@@ -11,12 +11,20 @@ IDENTITY_HINTS = ("name", "company", "email")
 
 
 def _rows_to_dicts(cursor) -> list[dict]:
+    """
+    Converts a raw DuckDB cursor result into a list of dicts. 
+    Reads column names from cursor.description, zips them with each row. Used by the heuristic search to get entity rows as dicts.
+    """
     cols = [d[0] for d in cursor.description]
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
-def _discover_search_targets(schema_context: str) -> list[tuple[str, str]]:
-    """Parse VARCHAR columns from schema_context and return (table, search_expression) pairs for identity-like columns."""
+def _discover_search_targets(schema_context: str) -> list[tuple[str, str]]: # e.g. ("marts.dim_accounts", "name")
+    """
+    Parses the schema context string (already loaded by discover) to find searchable columns. 
+    Covered in the earlier breakdown — walks lines, finds VARCHAR columns whose names contain "name"/"company"/"email", 
+    groups by table, builds SQL expressions (with first_name || ' ' || last_name concat for person tables).
+    """
     table_cols: dict[str, list[str]] = {}
     current_table = None
     for line in schema_context.splitlines():
@@ -75,24 +83,28 @@ def _llm_fallback(target: str, schema_context: str, verbose: bool) -> dict:
     if verbose:
         print("[resolve] Heuristic failed, falling back to LLM search.", file=sys.stderr)
 
+    # Creates an LLM with run_query bound as a tool. Sends the full schema + a "find this entity" prompt.
     try:
         llm = get_llm().bind_tools([run_query])
     except Exception as e:
         return {"resolution_type": "not_found", "error": str(e)}
-
     messages = [
         SystemMessage(content=RESOLVE_FALLBACK_SYSTEM.format(schema_context=schema_context)),
         HumanMessage(content=f"Find the entity matching '{target}' in the database."),
     ]
 
+    # One LLM invocation. If it fails, return not_found.
     try:
         response = llm.invoke(messages)
     except Exception as e:
         return {"resolution_type": "not_found", "error": str(e)}
 
+    # If the LLM responded with text only (no SQL), it couldn't figure out how to search → not_found.
     if not response.tool_calls:
         return {"resolution_type": "not_found", "error": f"No entity found matching '{target}'."}
 
+    # For each SQL query the LLM wanted to run, execute it via run_query, check if it returned actual rows (not "0 rows" or "SQL Error"), 
+    # parse the first row into a dict. First successful parse → return as the resolved entity.
     for tc in response.tool_calls:
         result_str = str(run_query.invoke(tc["args"]))
         if verbose:
@@ -116,4 +128,5 @@ def resolve(state: AgentState) -> dict:
 
 
 def route_after_resolve(state: AgentState) -> str:
+    """The conditional edge function for LangGraph. Maps "exact" → continue to gather_context, anything else → end with error. """
     return {"exact": "gather_context"}.get(state.resolution_type, "error_exit")
