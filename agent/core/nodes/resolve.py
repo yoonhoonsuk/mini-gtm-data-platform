@@ -35,7 +35,6 @@ def _discover_search_targets(schema_context: str) -> list[tuple[str, str]]:
             if col not in ("first_name", "last_name"):
                 results.append((table, col))
 
-    results.sort(key=lambda x: ("dim_" not in x[0], "marts" not in x[0]))
     return results
 
 
