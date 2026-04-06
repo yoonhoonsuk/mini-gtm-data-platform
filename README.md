@@ -78,7 +78,7 @@ The core problem was enabling the agent to dynamically generate accurate SQL acr
 | **Hardcoded SQL** | Fast, deterministic | Breaks on schema changes | Too brittle |
 | **Single LLM call** | One round-trip | Misses tables it doesn't think to query first pass | Misses depth |
 | **Vector Search** | Good for massive dbs (primarily document based) | Overkill. Semantic search struggles with exact column names and SQL syntax logic | Over-engineered. Unnecessary for a universe of 18 tables |
-| **RRF table selection** | Fuse multiple signals (schema embeddings, table popularity, row counts) to rank relevant tables without LLM calls | Over-engineered for 18 tables that fit in context | Great as a filter, but not a full solution |
+| **Hybrid Search** | Fuse multiple signals (schema embeddings, table popularity, row counts) to rank relevant tables | Over-engineered for 18 tables that fit in context | Over-engineered. Unnecessary for a universe of 18 tables |
 | **Full feedback loop** | Maximum coverage | 10+ LLM calls per run | Too slow |
 | **Iterative planner with early exit** | Real dbt SQL for joins, 1-3 rounds, exit conditions | 3-5 serial LLM calls | Best middle ground |
 
