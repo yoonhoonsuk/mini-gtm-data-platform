@@ -16,7 +16,7 @@ def _fmt(entity: dict) -> str:
     return "\n".join(f"  {k}: {v}" for k, v in entity.items())
 
 
-def _all_tables(schema_context: str) -> set[str]:
+def _get_tables(schema_context: str) -> set[str]:
     """Extract table names (e.g. 'marts.dim_accounts') from schema context lines like '\\nstaging.stg_accounts:'."""
     tables = set()
     for line in schema_context.splitlines():
@@ -90,7 +90,7 @@ def gather_context(state: AgentState) -> dict:
     all_parsed = []
     all_tables_data: dict[str, dict] = {}
     queried_tables = set()
-    tables = _all_tables(state.schema_context)
+    tables = _get_tables(state.schema_context)
     mart_tables = {t for t in tables if t.startswith("marts.")} # robust?
     llm = get_llm()
 
