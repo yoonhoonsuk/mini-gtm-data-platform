@@ -22,7 +22,7 @@ def _parse_manifest() -> str:
         if node.get("resource_type") != "model":
             continue
         deps = node.get("depends_on", {}).get("nodes", [])
-        dep_names = [d.split(".")[-1] for d in deps]
+        dep_names = [d.split(".")[-1] for d in deps] # taking last part of ref string: [stg_accounts, stg_opprtunities ...]
         header = f"{node['schema']}.{node['name']}  ←  {', '.join(dep_names) or 'no dependencies'}"
         raw_code = node.get("raw_code", "").strip() if node.get("schema") == "marts" else ""
         if raw_code:

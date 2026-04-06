@@ -15,43 +15,33 @@ def _rows_to_dicts(cursor) -> list[dict]:
     return [dict(zip(cols, row)) for row in cursor.fetchall()]
 
 
-def _discover_search_targets() -> list[tuple[str, str]]:
-    """Discover (table, search_expression) pairs from VARCHAR columns whose names contain identity hints."""
-    con = _get_connection()
-    try:
-        rows = con.execute("""
-            SELECT table_schema, table_name, column_name
-            FROM information_schema.columns
-            WHERE table_schema IN ('staging', 'marts')
-              AND data_type = 'VARCHAR'
-            ORDER BY table_schema, table_name, ordinal_position
-        """).fetchall()
-    finally:
-        con.close()
-
+def _discover_search_targets(schema_context: str) -> list[tuple[str, str]]:
+    """Parse VARCHAR columns from schema_context and return (table, search_expression) pairs for identity-like columns."""
     table_cols: dict[str, list[str]] = {}
-    for schema, table, col in rows:
-        if any(hint in col for hint in IDENTITY_HINTS):
-            table_cols.setdefault(f"{schema}.{table}", []).append(col)
+    current_table = None
+    for line in schema_context.splitlines():
+        if line.endswith(":") and "." in line:
+            current_table = line.rstrip(":").strip()
+        elif current_table and "(VARCHAR)" in line:
+            col = line.strip().lstrip("- ").split(" ")[0]
+            if any(hint in col for hint in IDENTITY_HINTS):
+                table_cols.setdefault(current_table, []).append(col)
 
     results = []
     for table, cols in table_cols.items():
-        # If table has first_name + last_name, concatenate for full-name search
         if "first_name" in cols and "last_name" in cols:
             results.append((table, "first_name || ' ' || last_name"))
-        # Otherwise search each identity column individually
         for col in cols:
             if col not in ("first_name", "last_name"):
                 results.append((table, col))
 
-    # Prefer marts/dim tables (richer data) over staging
     results.sort(key=lambda x: ("dim_" not in x[0], "marts" not in x[0]))
     return results
 
 
-def _heuristic_search(target: str, verbose: bool) -> dict | None:
+def _heuristic_search(target: str, schema_context: str, verbose: bool) -> dict | None:
     """ILIKE search across dynamically discovered identity columns."""
-    for table, expr in _discover_search_targets():
+    for table, expr in _discover_search_targets(schema_context):
         try:
             con = _get_connection()
             rows = _rows_to_dicts(con.execute(
@@ -122,7 +112,7 @@ def resolve(state: AgentState) -> dict:
     target = state.target_input.strip()
     if state.verbose:
         print(f"[resolve] Searching for: '{target}'", file=sys.stderr)
-    return _heuristic_search(target, state.verbose) \
+    return _heuristic_search(target, state.schema_context, state.verbose) \
         or _llm_fallback(target, state.schema_context, state.verbose)
 
 
